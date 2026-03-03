@@ -1,7 +1,7 @@
 name: JEPX_Update
 on:
   schedule:
-    - cron: '45 1 * * *' # 日本時間10:45
+    - cron: '45 1 * * *'
   workflow_dispatch:
 jobs:
   run_bot:
@@ -10,20 +10,32 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+
       - name: Install dependencies
         run: |
           pip install pandas playwright
           playwright install chromium
-      - name: Run
+
+      - name: Run Python Script
         run: python main.py
-      - name: Commit
+
+      - name: Check file and Force Commit
         run: |
-          git config user.name "Bot"
-          git config user.email "bot@example.com"
-          git add result.txt
-          git commit -m "Update" || exit 0
-          git push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # 強制的に最新のresult.txtをステージングに追加
+          git add -f result.txt
+          # 変更がある場合のみコミットし、ない場合はスキップ
+          if ! git diff --cached --exit-code; then
+            git commit -m "Update JEPX data: $(date +'%Y-%m-%d %H:%M:%S')"
+            git push origin main
+          else
+            echo "No changes detected in result.txt"
+          fi
