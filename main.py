@@ -5,17 +5,14 @@ from datetime import datetime, timedelta
 from playwright.async_api import async_playwright
 
 PRICE_LIMIT = 15.0
-SUPER_CHEAP_LIMIT = 5.0
 OUTPUT_FILE = "result.txt"
 
 def save_combined_data(message, price_csv):
-    """詳細文章と数値データをセットで保存する"""
+    """文章と数値を確実にセットで保存する"""
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        # 詳細なレポート文章を書き込む
         f.write(message + "\n")
-        # 最後にグラフ用のカンマ区切り数値を書き込む
         f.write(price_csv + "\n")
-    print(f"✅ {OUTPUT_FILE} を詳細版で更新しました。")
+    print(f"✅ {OUTPUT_FILE} を更新しました。")
 
 async def main_logic():
     print("処理を開始します...", flush=True)
@@ -30,6 +27,7 @@ async def main_logic():
             await page.goto("https://www.jepx.jp/electricpower/market-data/spot/", wait_until="networkidle")
             await page.wait_for_timeout(3000)
 
+            # ダウンロードボタンを探す
             buttons = page.locator('button:has-text("ダウンロード"), a:has-text("ダウンロード")')
             for i in range(await buttons.count()):
                 try:
@@ -51,7 +49,6 @@ async def main_logic():
     try:
         df = pd.read_csv(correct_csv_path, encoding="shift_jis")
         target_area = next((col for col in df.columns if "東京" in col and "プライス" in col), None)
-        df = df.dropna(subset=["受渡日", target_area])
         
         target_date = tomorrow.strftime("%Y/%m/%d")
         df_target = df[df["受渡日"].str.contains(target_date, na=False)].copy()
@@ -65,39 +62,10 @@ async def main_logic():
         prices = df_target[target_area].astype(str).tolist()
         price_csv = ",".join(prices)
 
-        # 文章レポートの作成（以前の豪華版を復元）
-        df_target['時刻コード'] = pd.to_numeric(df_target['時刻コード'])
-        min_row = df_target.loc[df_target[target_area].idxmin()]
-        min_price = min_row[target_area]
-        tc = int(min_row['時刻コード'])
-        hour, minute = (tc - 1) // 2, ("30" if tc % 2 == 0 else "00")
-
-        cheap_count = len(df_target[df_target[target_area] <= PRICE_LIMIT])
-        
-        # 5円以下の時間帯特定
-        super_cheap = df_target[df_target[target_area] <= SUPER_CHEAP_LIMIT]
-        sc_times = []
-        for _, row in super_cheap.iterrows():
-            h = (int(row['時刻コード'])-1)//2
-            m = "30" if int(row['時刻コード'])%2==0 else "00"
-            sc_times.append(f"{h:02d}:{m}")
-        sc_str = "、".join(sc_times) if sc_times else "なし"
-
-        daytime_mask = (df_target['時刻コード'] >= 17) & (df_target['時刻コード'] <= 36)
-        day_avg = round(df_target.loc[daytime_mask, target_area].mean(), 2)
-        night_avg = round(df_target.loc[~daytime_mask, target_area].mean(), 2)
-        recommend = f"【{'日中' if day_avg < night_avg else '夜間'} (18時〜翌8時)】" if day_avg != night_avg else "どちらも同じ"
-
-        message = (
-            f"【{date_label}のJEPX価格情報】\n"
-            f"👑 最安値: {min_price}円 ({hour:02d}:{minute}〜)\n"
-            f"🔋 {PRICE_LIMIT}円以下のコマ数: {cheap_count}コマ\n"
-            f"✨ {SUPER_CHEAP_LIMIT}円以下の時間帯:\n{sc_str}\n\n"
-            f"📊 平均単価比較\n"
-            f"☀️ 日中(8-18時): {day_avg}円\n"
-            f"🌙 夜間(18-翌8時): {night_avg}円\n\n"
-            f"💡 全体的に{recommend}の方が安いです！"
-        )
+        # レポート文
+        min_p = df_target[target_area].min()
+        avg_p = round(df_target[target_area].mean(), 2)
+        message = f"【{date_label}のJEPX情報】平均:{avg_p}円 最安:{min_p}円。詳細は画像を確認！"
 
         save_combined_data(message, price_csv)
     except Exception as e:
