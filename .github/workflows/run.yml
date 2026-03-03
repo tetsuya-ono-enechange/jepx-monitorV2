@@ -1,0 +1,29 @@
+name: JEPX_Update
+on:
+  schedule:
+    - cron: '45 1 * * *' # 日本時間10:45
+  workflow_dispatch:
+jobs:
+  run_bot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: |
+          pip install pandas playwright
+          playwright install chromium
+      - name: Run
+        run: python main.py
+      - name: Commit
+        run: |
+          git config user.name "Bot"
+          git config user.email "bot@example.com"
+          git add result.txt
+          git commit -m "Update" || exit 0
+          git push
