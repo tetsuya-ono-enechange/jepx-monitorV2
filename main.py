@@ -4,70 +4,62 @@ import asyncio
 from datetime import datetime, timedelta
 from playwright.async_api import async_playwright
 
-async def get_jepx_data():
+async def main_logic():
     now = datetime.now()
     tomorrow = now + timedelta(days=1)
-    target_date_str = tomorrow.strftime("%Y/%m/%d")
     csv_file = "jepx_data.csv"
     
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page(viewport={"width": 1280, "height": 800})
-        
-        print("JEPXサイトにアクセス中...")
-        await page.goto("https://www.jepx.jp/electricpower/market-data/spot/", wait_until="networkidle")
-        await page.wait_for_timeout(3000)
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1280, "height": 800})
+            await page.goto("https://www.jepx.jp/electricpower/market-data/spot/", wait_until="networkidle")
+            
+            # ダウンロード成功までリトライ
+            buttons = page.locator('button:has-text("ダウンロード"), a:has-text("ダウンロード")')
+            success = False
+            for i in range(await buttons.count()):
+                try:
+                    async with page.expect_download(timeout=30000) as dl_info:
+                        await buttons.nth(i).click()
+                    download = await dl_info.value
+                    await download.save_as(csv_file)
+                    df_test = pd.read_csv(csv_file, encoding="shift_jis")
+                    if any("東京" in col for col in df_test.columns):
+                        success = True
+                        break
+                except: continue
+            await browser.close()
+            if not success: return
 
-        # ダウンロードボタンを探して、成功するまでループ
-        buttons = page.locator('button:has-text("ダウンロード"), a:has-text("ダウンロード")')
-        success = False
-        for i in range(await buttons.count()):
-            try:
-                print(f"ボタン {i+1} を試行中...")
-                async with page.expect_download(timeout=30000) as dl_info:
-                    await buttons.nth(i).click()
-                download = await dl_info.value
-                await download.save_as(csv_file)
-                
-                # 東京のデータが含まれているかチェック
-                df_test = pd.read_csv(csv_file, encoding="shift_jis")
-                if any("東京" in col for col in df_test.columns):
-                    print("✅ 正しいCSVを取得しました")
-                    success = True
-                    break
-            except:
-                continue
+        # 解析
+        df = pd.read_csv(csv_file, encoding="shift_jis")
+        area_col = next(c for c in df.columns if "東京" in c and "プライス" in c)
         
-        await browser.close()
-        if not success: return None, None
-
-    # データ解析
-    df = pd.read_csv(csv_file, encoding="shift_jis")
-    area_col = next(c for c in df.columns if "東京" in c and "プライス" in c)
-    df_day = df[df["受渡日"] == target_date_str].copy()
-    
-    if df_day.empty:
-        # 明日がなければ今日を取得
-        target_date_str = now.strftime("%Y/%m/%d")
+        target_date_str = tomorrow.strftime("%Y/%m/%d")
         df_day = df[df["受渡日"] == target_date_str].copy()
+        if df_day.empty:
+            target_date_str = now.strftime("%Y/%m/%d")
+            df_day = df[df["受渡日"] == target_date_str].copy()
 
-    prices = df_day[area_col].tolist()
-    avg = round(sum(prices)/len(prices), 2)
-    min_p = min(prices)
-    
-    report = f"【{target_date_str}の価格】平均:{avg}円 / 最安:{min_p}円"
-    price_csv = ",".join(map(str, prices))
-    
-    return report, price_csv
+        # 48コマの数字を作成
+        prices = df_day[area_col].astype(str).tolist()
+        price_csv = ",".join(prices)
 
-async def main():
-    report, prices = await get_jepx_data()
-    if report:
+        # レポート文章（改行をすべて消して「1行目」を死守する）
+        avg_p = round(df_day[area_col].mean(), 2)
+        min_p = df_day[area_col].min()
+        report = f"【{target_date_str}価格】 平均:{avg_p}円 最安:{min_p}円。詳細はグラフ参照。"
+
+        # ★ここが最重要：result.txtを「2行」で作成
         with open("result.txt", "w", encoding="utf-8") as f:
-            f.write(report + "\n" + prices)
-        print("✅ result.txt を更新しました")
-    else:
-        print("❌ データの取得に失敗しました")
+            f.write(report + "\n") # 1行目
+            f.write(price_csv)     # 2行目
+            
+        print("✅ result.txt を2行形式で保存しました")
+
+    except Exception as e:
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main_logic())
